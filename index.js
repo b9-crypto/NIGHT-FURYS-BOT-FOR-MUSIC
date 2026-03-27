@@ -94,7 +94,8 @@ const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
 const IDLE_DISCONNECT_MS = 2 * 60 * 1000;
 const SPOTIFY_COLLECTION_LIMIT = 25;
 const VOICE_CONNECT_TIMEOUT_MS = 30_000;
-const VOICE_REJOIN_TIMEOUT_MS = 20_000;
+const VOICE_CONNECT_MAX_ATTEMPTS = 4;
+const VOICE_CONNECT_RETRY_DELAY_MS = 2_500;
 const YTDL_PLAYER_CLIENTS = ['ANDROID', 'IOS', 'TV', 'WEB', 'WEB_EMBEDDED'];
 const ytdlAgent = createYtdlAgent(process.env.YOUTUBE_COOKIE);
 let youtubeClientPromise = null;
@@ -784,67 +785,86 @@ async function createQueue(guild, voiceChannel) {
     }
   }
 
-  const connection = joinVoiceChannel({
-    channelId: voiceChannel.id,
-    guildId: guild.id,
-    adapterCreator: guild.voiceAdapterCreator,
-    selfDeaf: true
-  });
+  let connection = null;
+  const attempts = [];
 
-  const connectionStateTrace = [];
-  const trackConnectionState = (_oldState, newState) => {
-    const traceEntry = `${new Date().toISOString()} ${newState.status}`;
-    connectionStateTrace.push(traceEntry);
-    if (connectionStateTrace.length > 8) {
-      connectionStateTrace.shift();
-    }
-  };
+  for (let attempt = 1; attempt <= VOICE_CONNECT_MAX_ATTEMPTS; attempt += 1) {
+    const attemptConnection = joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: guild.id,
+      adapterCreator: guild.voiceAdapterCreator,
+      selfDeaf: true,
+      selfMute: false,
+      daveEncryption: false,
+      debug: true
+    });
 
-  connection.on('stateChange', trackConnectionState);
-
-  try {
-    await entersState(connection, VoiceConnectionStatus.Ready, VOICE_CONNECT_TIMEOUT_MS);
-  } catch (error) {
-    const firstFailureState = connection.state.status;
-    console.error(
-      `Voice connection did not become ready on first attempt in guild ${guild.id}:`,
-      {
-        channelId: voiceChannel.id,
-        state: firstFailureState,
-        error: error?.message || error
+    const connectionStateTrace = [];
+    const debugTrace = [];
+    const trackConnectionState = (_oldState, newState) => {
+      const traceEntry = `${new Date().toISOString()} ${newState.status}`;
+      connectionStateTrace.push(traceEntry);
+      if (connectionStateTrace.length > 12) {
+        connectionStateTrace.shift();
       }
-    );
+    };
+    const trackConnectionDebug = (message) => {
+      debugTrace.push(`${new Date().toISOString()} ${message}`);
+      if (debugTrace.length > 25) {
+        debugTrace.shift();
+      }
+    };
+    const trackConnectionError = (error) => {
+      console.error(`Voice connection emitted an error in guild ${guild.id}:`, error);
+    };
+
+    attemptConnection.on('stateChange', trackConnectionState);
+    attemptConnection.on('debug', trackConnectionDebug);
+    attemptConnection.on('error', trackConnectionError);
 
     try {
-      connection.rejoin();
-      await entersState(connection, VoiceConnectionStatus.Ready, VOICE_REJOIN_TIMEOUT_MS);
-    } catch (retryError) {
-      const failedState = connection.state.status;
-      const stateTrace = connectionStateTrace.join(' -> ');
+      await entersState(attemptConnection, VoiceConnectionStatus.Ready, VOICE_CONNECT_TIMEOUT_MS);
+      attemptConnection.off('stateChange', trackConnectionState);
+      attemptConnection.off('debug', trackConnectionDebug);
+      connection = attemptConnection;
+      break;
+    } catch (error) {
+      const failedState = attemptConnection.state.status;
+      const attemptSummary = {
+        attempt,
+        channelId: voiceChannel.id,
+        state: failedState,
+        error: error?.message || error,
+        stateTrace: connectionStateTrace.join(' -> '),
+        debugTrace
+      };
 
+      attempts.push(attemptSummary);
       console.error(
-        `Voice connection failed to become ready after retry in guild ${guild.id}:`,
-        {
-          channelId: voiceChannel.id,
-          state: failedState,
-          firstError: error?.message || error,
-          retryError: retryError?.message || retryError,
-          stateTrace
-        }
+        `Voice connection attempt ${attempt} failed in guild ${guild.id}:`,
+        attemptSummary
       );
 
+      attemptConnection.off('stateChange', trackConnectionState);
+      attemptConnection.off('debug', trackConnectionDebug);
+
       try {
-        connection.destroy();
+        attemptConnection.destroy();
       } catch {
         // Ignore cleanup errors if the connection never fully initialized.
       }
 
-      throw new UserFacingError(
-        `I could not finish the voice connection inside **${voiceChannel.name}**. Last connection state: \`${failedState}\`.`
-      );
+      if (attempt < VOICE_CONNECT_MAX_ATTEMPTS) {
+        await wait(VOICE_CONNECT_RETRY_DELAY_MS * attempt);
+      }
     }
-  } finally {
-    connection.off('stateChange', trackConnectionState);
+  }
+
+  if (!connection) {
+    const lastAttempt = attempts[attempts.length - 1];
+    throw new UserFacingError(
+      `I could not finish the voice connection inside **${voiceChannel.name}** after ${VOICE_CONNECT_MAX_ATTEMPTS} attempts. Last connection state: \`${lastAttempt?.state || 'unknown'}\`.`
+    );
   }
 
   const player = createAudioPlayer({
@@ -2114,6 +2134,10 @@ function stripRuntimeFields(song) {
     requestedById: song.requestedById,
     requestedByName: song.requestedByName
   };
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getRequiredMemberVoiceChannel(interaction) {
