@@ -110,6 +110,8 @@ process.on('uncaughtException', (error) => {
   console.error('Uncaught exception:', error);
 });
 
+console.log(`Runtime Node.js version: ${process.version}`);
+
 class UserFacingError extends Error {
   constructor(message) {
     super(message);

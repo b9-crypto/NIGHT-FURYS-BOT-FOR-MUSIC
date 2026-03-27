@@ -11,7 +11,7 @@ Discord music bot built with `discord.js` voice support, YouTube/Spotify playbac
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 22.12.0+
 - A Discord application and bot token
 - A Discord bot invited with voice permissions
 
