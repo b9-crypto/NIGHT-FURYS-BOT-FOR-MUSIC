@@ -93,9 +93,9 @@ const searchCache = new Map();
 const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
 const IDLE_DISCONNECT_MS = 2 * 60 * 1000;
 const SPOTIFY_COLLECTION_LIMIT = 25;
-const VOICE_CONNECT_TIMEOUT_MS = 30_000;
-const VOICE_CONNECT_MAX_ATTEMPTS = 4;
-const VOICE_CONNECT_RETRY_DELAY_MS = 2_500;
+const VOICE_CONNECT_TIMEOUT_MS = 12_000;
+const VOICE_CONNECT_MAX_ATTEMPTS = 2;
+const VOICE_CONNECT_RETRY_DELAY_MS = 1_500;
 const YTDL_PLAYER_CLIENTS = ['ANDROID', 'IOS', 'TV', 'WEB', 'WEB_EMBEDDED'];
 const ytdlAgent = createYtdlAgent(process.env.YOUTUBE_COOKIE);
 let youtubeClientPromise = null;
@@ -343,13 +343,15 @@ async function handlePlayCommand(interaction) {
 }
 
 async function handleJoinCommand(interaction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   const voiceChannel = getRequiredMemberVoiceChannel(interaction);
   validateVoicePermissions(interaction, voiceChannel);
 
   const existingQueue = queues.get(interaction.guildId);
   if (existingQueue) {
     if (existingQueue.voiceChannelId === voiceChannel.id) {
-      await interaction.reply({
+      await interaction.editReply({
         embeds: [
           createInfoEmbed(
             'Already Connected',
@@ -368,7 +370,7 @@ async function handleJoinCommand(interaction) {
 
   await createQueue(interaction.guild, voiceChannel);
 
-  await interaction.reply({
+  await interaction.editReply({
     embeds: [
       createInfoEmbed(
         'Joined Voice Channel',
@@ -604,11 +606,13 @@ async function handleLoopCommand(interaction) {
 }
 
 async function handleTwentyFourSevenCommand(interaction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   const enabled = interaction.options.getBoolean('enabled', true);
   const existingQueue = queues.get(interaction.guildId);
 
   if (!existingQueue && !enabled) {
-    await interaction.reply({
+    await interaction.editReply({
       embeds: [
         createInfoEmbed(
           '24/7 Mode Updated',
@@ -638,7 +642,7 @@ async function handleTwentyFourSevenCommand(interaction) {
     scheduleIdleDisconnect(interaction.guildId);
   }
 
-  await interaction.reply({
+  await interaction.editReply({
     embeds: [
       createInfoEmbed(
         '24/7 Mode Updated',
