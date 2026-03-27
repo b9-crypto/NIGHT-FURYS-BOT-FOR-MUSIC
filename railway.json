@@ -1,0 +1,15 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK"
+  },
+  "deploy": {
+    "preDeployCommand": "node deploy.js",
+    "startCommand": "node index.js",
+    "healthcheckPath": "/health",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10,
+    "overlapSeconds": 0,
+    "drainingSeconds": 30
+  }
+}
