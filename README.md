@@ -113,3 +113,5 @@ FFMPEG_PATH=
 - Railway treats this bot as a persistent service, which fits long-running background workers
 - The `/health` route only starts when Railway provides a `PORT`, so local development stays unchanged
 - `CLIENT_ID` is required on Railway because `node deploy.js` runs before each deployment
+- Text commands can run on Railway, but voice playback is blocked in this repo on Railway by design to avoid repeated failed voice joins
+- If you deploy on a host with outbound UDP support, voice playback can be enabled there normally
