@@ -1,5 +1,6 @@
 ﻿require('dotenv').config();
 
+const dns = require('node:dns');
 const http = require('node:http');
 const { PassThrough, Readable } = require('node:stream');
 
@@ -37,6 +38,15 @@ const {
   createQueueEmbed,
   createUpNextEmbed
 } = require('./ui');
+
+if (typeof dns.setDefaultResultOrder === 'function') {
+  try {
+    // Railway does not support outbound IPv6, so prefer IPv4 for Discord voice endpoints.
+    dns.setDefaultResultOrder('ipv4first');
+  } catch (error) {
+    console.error('Failed to force IPv4 DNS resolution order:', error);
+  }
+}
 
 if (ffmpegPath && !process.env.FFMPEG_PATH) {
   process.env.FFMPEG_PATH = ffmpegPath;
@@ -294,7 +304,6 @@ async function handleQueueButton(interaction) {
 }
 
 async function handlePlayCommand(interaction) {
-  ensureVoicePlatformSupported();
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const voiceChannel = getRequiredMemberVoiceChannel(interaction);
@@ -333,7 +342,6 @@ async function handlePlayCommand(interaction) {
 }
 
 async function handleJoinCommand(interaction) {
-  ensureVoicePlatformSupported();
   const voiceChannel = getRequiredMemberVoiceChannel(interaction);
   validateVoicePermissions(interaction, voiceChannel);
 
@@ -610,10 +618,6 @@ async function handleTwentyFourSevenCommand(interaction) {
       flags: MessageFlags.Ephemeral
     });
     return;
-  }
-
-  if (enabled) {
-    ensureVoicePlatformSupported();
   }
 
   const voiceChannel = getRequiredMemberVoiceChannel(interaction);
@@ -2184,24 +2188,6 @@ function getExistingQueue(guildId) {
   }
 
   return queue;
-}
-
-function isRailwayDeployment() {
-  return Boolean(process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_SERVICE_ID);
-}
-
-function ensureVoicePlatformSupported() {
-  if (!isRailwayDeployment()) {
-    return;
-  }
-
-  if (String(process.env.ALLOW_RAILWAY_VOICE || '').toLowerCase() === 'true') {
-    return;
-  }
-
-  throw new UserFacingError(
-    'Voice playback is disabled on this Railway deployment. Discord voice requires UDP networking, and this bot should be moved to a host with outbound UDP support.'
-  );
 }
 
 function isQueueIdle(queue) {
