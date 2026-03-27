@@ -83,6 +83,8 @@ const searchCache = new Map();
 const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
 const IDLE_DISCONNECT_MS = 2 * 60 * 1000;
 const SPOTIFY_COLLECTION_LIMIT = 25;
+const VOICE_CONNECT_TIMEOUT_MS = 30_000;
+const VOICE_REJOIN_TIMEOUT_MS = 20_000;
 const YTDL_PLAYER_CLIENTS = ['ANDROID', 'IOS', 'TV', 'WEB', 'WEB_EMBEDDED'];
 const ytdlAgent = createYtdlAgent(process.env.YOUTUBE_COOKIE);
 let youtubeClientPromise = null;
@@ -779,13 +781,48 @@ async function createQueue(guild, voiceChannel) {
     selfDeaf: true
   });
 
+  const connectionStateTrace = [];
+  const trackConnectionState = (_oldState, newState) => {
+    const traceEntry = `${new Date().toISOString()} ${newState.status}`;
+    connectionStateTrace.push(traceEntry);
+    if (connectionStateTrace.length > 8) {
+      connectionStateTrace.shift();
+    }
+  };
+
+  connection.on('stateChange', trackConnectionState);
+
   try {
-    await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+    await entersState(connection, VoiceConnectionStatus.Ready, VOICE_CONNECT_TIMEOUT_MS);
   } catch (error) {
+    const firstFailureState = connection.state.status;
+    console.error(
+      `Voice connection did not become ready on first attempt in guild ${guild.id}:`,
+      {
+        channelId: voiceChannel.id,
+        state: firstFailureState,
+        error: error?.message || error
+      }
+    );
+
     try {
       connection.rejoin();
-      await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
+      await entersState(connection, VoiceConnectionStatus.Ready, VOICE_REJOIN_TIMEOUT_MS);
     } catch (retryError) {
+      const failedState = connection.state.status;
+      const stateTrace = connectionStateTrace.join(' -> ');
+
+      console.error(
+        `Voice connection failed to become ready after retry in guild ${guild.id}:`,
+        {
+          channelId: voiceChannel.id,
+          state: failedState,
+          firstError: error?.message || error,
+          retryError: retryError?.message || retryError,
+          stateTrace
+        }
+      );
+
       try {
         connection.destroy();
       } catch {
@@ -793,9 +830,11 @@ async function createQueue(guild, voiceChannel) {
       }
 
       throw new UserFacingError(
-        `I could not finish the voice connection inside **${voiceChannel.name}**. Current connection state: \`${connection.state.status}\`.`
+        `I could not finish the voice connection inside **${voiceChannel.name}**. Last connection state: \`${failedState}\`.`
       );
     }
+  } finally {
+    connection.off('stateChange', trackConnectionState);
   }
 
   const player = createAudioPlayer({
